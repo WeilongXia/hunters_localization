@@ -5,20 +5,19 @@
 
 // namespace hunters_localization
 // {
+
+using PointT = pcl::PointXYZ;
+using CloudT = pcl::PointCloud<PointT>;
+
 class CloudData
 {
   public:
-    using POINT = pcl::PointXYZ;
-    using CLOUD = pcl::PointCloud<POINT>;
-    using CLOUD_PTR = CLOUD::Ptr;
-
-  public:
-    CloudData() : cloud_ptr(new CLOUD())
+    CloudData() : cloud_ptr(new CloudT())
     {
     }
 
   public:
     double time = 0.0;
-    CLOUD_PTR cloud_ptr;
+    CloudT::Ptr cloud_ptr;
 };
 // } // namespace hunters_localization

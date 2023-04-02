@@ -2,19 +2,26 @@
 
 // namespace hunters_localization
 // {
-FrontEnd::FrontEnd()
-    : ndt_ptr_(new pcl::NormalDistributionsTransform<CloudData::POINT, CloudData::POINT>()),
-      local_map_ptr_(new CloudData::CLOUD()), global_map_ptr_(new CloudData::CLOUD()),
-      result_cloud_ptr_(new CloudData::CLOUD())
+FrontEnd::FrontEnd(const ros::NodeHandle &nh)
+    : ndt_ptr_(new pcl::NormalDistributionsTransform<PointT, PointT>()), local_map_ptr_(new CloudT()),
+      global_map_ptr_(new CloudT()), result_cloud_ptr_(new CloudT()),
+      register_ptr_(new pclomp::NormalDistributionsTransform<PointT, PointT>())
 {
-    // TODO: yaml file
-    cloud_filter_.setLeafSize(1.3, 1.3, 1.3);
-    local_map_filter_.setLeafSize(0.6, 0.6, 0.6);
-    display_filter_.setLeafSize(0.5, 0.5, 0.5);
-    ndt_ptr_->setResolution(1.0);
-    ndt_ptr_->setStepSize(0.1);
-    ndt_ptr_->setTransformationEpsilon(0.01);
-    ndt_ptr_->setMaximumIterations(30);
+    config_.GetParam(nh);
+
+    cloud_filter_.setLeafSize(config_.cloud_leaf_size, config_.cloud_leaf_size, config_.cloud_leaf_size);
+    local_map_filter_.setLeafSize(config_.local_map_leaf_size, config_.local_map_leaf_size,
+                                  config_.local_map_leaf_size);
+    display_filter_.setLeafSize(config_.display_leaf_size, config_.display_leaf_size, config_.display_leaf_size);
+    ndt_ptr_->setResolution(config_.pcl_ndt_resolution);
+    ndt_ptr_->setStepSize(config_.pcl_ndt_step_size);
+    ndt_ptr_->setTransformationEpsilon(config_.pcl_ndt_epsilon);
+    ndt_ptr_->setMaximumIterations(config_.pcl_ndt_max_iteration);
+
+    register_ptr_->setResolution(config_.ndt_omp_resolution);
+    int avalib_cpus = omp_get_max_threads();
+    register_ptr_->setNumThreads(avalib_cpus);
+    register_ptr_->setNeighborhoodSearchMethod(pclomp::DIRECT7);
 }
 
 Eigen::Matrix4f FrontEnd::Update(const CloudData &cloud_data)
@@ -23,7 +30,7 @@ Eigen::Matrix4f FrontEnd::Update(const CloudData &cloud_data)
     std::vector<int> indices;
     pcl::removeNaNFromPointCloud(*cloud_data.cloud_ptr, *current_frame_.cloud_data.cloud_ptr, indices);
 
-    CloudData::CLOUD_PTR filtered_cloud_ptr(new CloudData::CLOUD());
+    CloudT::Ptr filtered_cloud_ptr(new CloudT());
     cloud_filter_.setInputCloud(current_frame_.cloud_data.cloud_ptr);
     cloud_filter_.filter(*filtered_cloud_ptr);
 
@@ -42,9 +49,22 @@ Eigen::Matrix4f FrontEnd::Update(const CloudData &cloud_data)
     }
 
     // Not the first frame, execuate matching
-    ndt_ptr_->setInputSource(filtered_cloud_ptr);
-    ndt_ptr_->align(*result_cloud_ptr_, predict_pose);
-    current_frame_.pose = ndt_ptr_->getFinalTransformation();
+    if (config_.PCL_NDT)
+    {
+        TicToc tic_toc;
+        ndt_ptr_->setInputSource(filtered_cloud_ptr);
+        ndt_ptr_->align(*result_cloud_ptr_, predict_pose);
+        current_frame_.pose = ndt_ptr_->getFinalTransformation();
+        ROS_INFO("PCL_NDT registration cost %f ms", tic_toc.toc());
+    }
+    else if (config_.NDT_OMP)
+    {
+        TicToc tic_toc;
+        register_ptr_->setInputSource(filtered_cloud_ptr);
+        register_ptr_->align(*result_cloud_ptr_, predict_pose);
+        current_frame_.pose = register_ptr_->getFinalTransformation();
+        ROS_INFO("NDT_OMP registration cost %f ms", tic_toc.toc());
+    }
 
     // Update relative motion between current_frame and last_frame
     step_pose = last_pose.inverse() * current_frame_.pose;
@@ -52,11 +72,10 @@ Eigen::Matrix4f FrontEnd::Update(const CloudData &cloud_data)
     last_pose = current_frame_.pose;
 
     // Determine if current_frame is a new key_frame, depends on the matching distance
-    // TODO: yaml file
     if (fabs(last_key_frame_pose(0, 3) - current_frame_.pose(0, 3)) +
             fabs(last_key_frame_pose(1, 3) - current_frame_.pose(1, 3)) +
             fabs(last_key_frame_pose(2, 3) - current_frame_.pose(2, 3)) >
-        2.0)
+        config_.key_pose_threshold)
     {
         UpdateNewFrame(current_frame_);
         last_key_frame_pose = current_frame_.pose;
@@ -81,17 +100,16 @@ void FrontEnd::UpdateNewFrame(const Frame &new_key_frame)
 {
     Frame key_frame = new_key_frame;
 
-    key_frame.cloud_data.cloud_ptr.reset(new CloudData::CLOUD(*new_key_frame.cloud_data.cloud_ptr));
-    CloudData::CLOUD_PTR transformed_cloud_ptr(new CloudData::CLOUD());
+    key_frame.cloud_data.cloud_ptr.reset(new CloudT(*new_key_frame.cloud_data.cloud_ptr));
+    CloudT::Ptr transformed_cloud_ptr(new CloudT());
 
     // update local_map
     local_map_frames_.push_back(key_frame);
-    // TODO: yaml file
-    while (local_map_frames_.size() > 20)
+    while (local_map_frames_.size() > config_.local_map_size)
     {
         local_map_frames_.pop_front();
     }
-    local_map_ptr_.reset(new CloudData::CLOUD());
+    local_map_ptr_.reset(new CloudT());
     for (size_t i = 0; i < local_map_frames_.size(); ++i)
     {
         pcl::transformPointCloud(*local_map_frames_.at(i).cloud_data.cloud_ptr, *transformed_cloud_ptr,
@@ -100,17 +118,31 @@ void FrontEnd::UpdateNewFrame(const Frame &new_key_frame)
     }
     has_new_local_map_ = true;
 
-    // update target cloud matched through ndt
-    if (local_map_frames_.size() < 10)
+    // update target cloud that will be matched
+    if (local_map_frames_.size() < config_.local_map_filter_threshold)
     {
-        ndt_ptr_->setInputTarget(local_map_ptr_);
+        if (config_.PCL_NDT)
+        {
+            ndt_ptr_->setInputTarget(local_map_ptr_);
+        }
+        else if (config_.NDT_OMP)
+        {
+            register_ptr_->setInputTarget(local_map_ptr_);
+        }
     }
     else
     {
-        CloudData::CLOUD_PTR filtered_local_map_ptr(new CloudData::CLOUD());
+        CloudT::Ptr filtered_local_map_ptr(new CloudT());
         local_map_filter_.setInputCloud(local_map_ptr_);
         local_map_filter_.filter(*filtered_local_map_ptr);
-        ndt_ptr_->setInputTarget(filtered_local_map_ptr);
+        if (config_.PCL_NDT)
+        {
+            ndt_ptr_->setInputTarget(local_map_ptr_);
+        }
+        else if (config_.NDT_OMP)
+        {
+            register_ptr_->setInputTarget(local_map_ptr_);
+        }
     }
 
     // update global_map
@@ -121,7 +153,7 @@ void FrontEnd::UpdateNewFrame(const Frame &new_key_frame)
     }
     else
     {
-        global_map_ptr_.reset(new CloudData::CLOUD());
+        global_map_ptr_.reset(new CloudT());
         for (size_t i = 0; i < global_map_frames_.size(); ++i)
         {
             pcl::transformPointCloud(*global_map_frames_.at(i).cloud_data.cloud_ptr, *transformed_cloud_ptr,
@@ -132,7 +164,7 @@ void FrontEnd::UpdateNewFrame(const Frame &new_key_frame)
     has_new_global_map_ = true;
 }
 
-bool FrontEnd::GetNewLocalMap(CloudData::CLOUD_PTR &local_map_ptr)
+bool FrontEnd::GetNewLocalMap(CloudT::Ptr &local_map_ptr)
 {
     if (has_new_local_map_)
     {
@@ -143,7 +175,7 @@ bool FrontEnd::GetNewLocalMap(CloudData::CLOUD_PTR &local_map_ptr)
     return false;
 }
 
-bool FrontEnd::GetNewGlobalMap(CloudData::CLOUD_PTR &global_map_ptr)
+bool FrontEnd::GetNewGlobalMap(CloudT::Ptr &global_map_ptr)
 {
     if (has_new_global_map_)
     {
@@ -154,7 +186,7 @@ bool FrontEnd::GetNewGlobalMap(CloudData::CLOUD_PTR &global_map_ptr)
     return false;
 }
 
-bool FrontEnd::GetCurrentScan(CloudData::CLOUD_PTR &current_scan_ptr)
+bool FrontEnd::GetCurrentScan(CloudT::Ptr &current_scan_ptr)
 {
     display_filter_.setInputCloud(result_cloud_ptr_);
     display_filter_.filter(*current_scan_ptr);

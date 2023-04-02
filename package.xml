@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>hunters_localization</name>
+  <version>0.0.0</version>
+  <description>localization module for hunters AGV</description>
+
+  <author email="xwl0524@gmail.com">Xia Weilong</author>
+
+  <maintainer email="xwl0524@gmail.com">Xia Weilong</maintainer>
+
+  <license>GPLv3</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>roslib</depend>
+  <depend>tf</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>eigen_conversions</depend>
+  <depend>ndt_omp</depend>
+
+</package>

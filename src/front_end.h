@@ -3,17 +3,25 @@
 #include <cmath>
 #include <deque>
 
+#include <Eigen/Core>
 #include <Eigen/Dense>
+#include <Eigen/Geometry>
 
 #include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/registration/ndt.h>
+#include <pcl_conversions/pcl_conversions.h>
 
 #include <ros/ros.h>
 
 #include "cloud_data.h"
+#include "localization_config.h"
+#include "tic_toc.h"
+
+#include "../ndt_omp/include/pclomp/ndt_omp.h"
+#include "../ndt_omp/include/pclomp/ndt_omp_impl.hpp"
 
 // namespace hunters_localization
 // {
@@ -27,33 +35,36 @@ class Frame
 class FrontEnd
 {
   public:
-    FrontEnd();
+    FrontEnd(const ros::NodeHandle &nh);
 
     Eigen::Matrix4f Update(const CloudData &cloud_data);
     bool SetInitPose(const Eigen::Matrix4f &init_pose);
     bool SetPredictPose(const Eigen::Matrix4f &predict_pose);
 
-    bool GetNewLocalMap(CloudData::CLOUD_PTR &local_map_ptr);
-    bool GetNewGlobalMap(CloudData::CLOUD_PTR &global_map_ptr);
-    bool GetCurrentScan(CloudData::CLOUD_PTR &current_scan_ptr);
+    bool GetNewLocalMap(CloudT::Ptr &local_map_ptr);
+    bool GetNewGlobalMap(CloudT::Ptr &global_map_ptr);
+    bool GetCurrentScan(CloudT::Ptr &current_scan_ptr);
+
+    LocalizationConfig config_;
 
   private:
     void UpdateNewFrame(const Frame &new_key_frame);
 
   private:
-    pcl::VoxelGrid<CloudData::POINT> cloud_filter_;
-    pcl::VoxelGrid<CloudData::POINT> local_map_filter_;
-    pcl::VoxelGrid<CloudData::POINT> display_filter_;
-    pcl::NormalDistributionsTransform<CloudData::POINT, CloudData::POINT>::Ptr ndt_ptr_;
+    pcl::VoxelGrid<PointT> cloud_filter_;
+    pcl::VoxelGrid<PointT> local_map_filter_;
+    pcl::VoxelGrid<PointT> display_filter_;
+    pcl::NormalDistributionsTransform<PointT, PointT>::Ptr ndt_ptr_;
+    pclomp::NormalDistributionsTransform<PointT, PointT>::Ptr register_ptr_;
 
     std::deque<Frame> local_map_frames_;
     std::deque<Frame> global_map_frames_;
 
     bool has_new_local_map_ = false;
     bool has_new_global_map_ = false;
-    CloudData::CLOUD_PTR local_map_ptr_;
-    CloudData::CLOUD_PTR global_map_ptr_;
-    CloudData::CLOUD_PTR result_cloud_ptr_;
+    CloudT::Ptr local_map_ptr_;
+    CloudT::Ptr global_map_ptr_;
+    CloudT::Ptr result_cloud_ptr_;
     Frame current_frame_;
 
     Eigen::Matrix4f init_pose_ = Eigen::Matrix4f::Identity();

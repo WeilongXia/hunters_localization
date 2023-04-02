@@ -1,0 +1,9 @@
+<launch>
+
+<node pkg="hunters_localization" type="front_end_node" name="front_end_node" respawn="false" output="screen"/>
+
+<rosparam command="load" file="$(find hunters_localization)/config/front_end.yaml" />
+
+<node name="rviz" pkg="rviz" type="rviz" args="-d $(find hunters_localization)/rviz/front_end.rviz" />
+
+</launch>

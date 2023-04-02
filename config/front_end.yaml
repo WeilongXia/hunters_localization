@@ -1,0 +1,20 @@
+cloud_leaf_size: 0.1
+local_map_leaf_size: 0.1
+display_leaf_size: 0.1
+
+pcl_ndt_resolution: 1.0
+pcl_ndt_step_size: 0.1
+pcl_ndt_epsilon: 0.01
+pcl_ndt_max_iteration: 30
+
+ndt_omp_resolution: 1.0
+
+key_pose_threshold: 2.0
+
+lidar_topic_name: "/velodyne_points"
+
+PCL_NDT: false
+NDT_OMP: true
+
+local_map_size: 20
+local_map_filter_threshold: 10
